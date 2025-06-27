@@ -1,31 +1,48 @@
-use std::collections::HashSet;
-
 use itertools::Itertools;
-use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, Repetition};
+use regex_syntax::hir::{
+    Class, ClassBytes, ClassBytesRange, ClassUnicode, ClassUnicodeRange, Hir, Repetition,
+};
+use rustc_hash::FxHashMap;
 
 use crate::*;
 
+pub trait IntoHir {
+    fn into_hir(self) -> Hir;
+}
+
+impl IntoHir for char {
+    fn into_hir(self) -> Hir {
+        Hir::class(Class::Unicode(ClassUnicode::new([ClassUnicodeRange::new(
+            self, self,
+        )])))
+    }
+}
+
+impl IntoHir for u8 {
+    fn into_hir(self) -> Hir {
+        Hir::class(Class::Bytes(ClassBytes::new([ClassBytesRange::new(
+            self, self,
+        )])))
+    }
+}
+
 /// Convert DFA back to REGEX Syntax
-pub fn dfa_to_hir(dfa_origin: &Dfa<char>) -> Hir {
+pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
+    let counter = dfa_origin.next_counter();
+
     let mut dfa = Dfa {
-        accept_states: HashSet::default(),
-        initial_states: HashSet::default(),
+        accept_states: Default::default(),
+        initial_states: Default::default(),
         links: dfa_origin
             .links
-            .iter()
+            .into_iter()
             .map(|link| Link {
                 from: link.from,
                 to: link.to,
-                symbol: Hir::class(Class::Unicode(ClassUnicode::new([ClassUnicodeRange::new(
-                    link.symbol,
-                    link.symbol,
-                )]))),
+                symbol: link.symbol.into_hir(),
             })
             .collect(),
     };
-
-    let next_counter_state = dfa_origin.max_state().map(|x| x + 1).unwrap_or(0);
-    let counter = Counter::new(next_counter_state);
 
     let start = counter.next();
     let end = counter.next();
@@ -45,31 +62,44 @@ pub fn dfa_to_hir(dfa_origin: &Dfa<char>) -> Hir {
     all_states.remove(&end);
 
     for rip in all_states {
-        debug_assert!(dfa.links_from_to(rip, rip).count() <= 1);
-
-        let self_loop = dfa.links_from_to(rip, rip).exactly_one().ok();
-        let self_loop = self_loop.map(|self_loop| {
-            Hir::repetition(Repetition {
-                greedy: false,
-                min: 0,
-                max: None,
-                sub: Box::new(self_loop.symbol.clone()),
+        let mut self_loops = dfa
+            .links_from_to(rip, rip)
+            .map(|self_loop| {
+                Hir::repetition(Repetition {
+                    greedy: false,
+                    min: 0,
+                    max: None,
+                    sub: Box::new(self_loop.symbol.clone()),
+                })
             })
-        });
+            .collect_vec();
 
-        let incomings_groups = dfa.links_to(rip).cloned().into_group_map_by(|x| x.from);
-        let outgoings_groups = dfa.links_from(rip).cloned().into_group_map_by(|x| x.to);
+        let self_loop = match self_loops.len() {
+            0 => None,
+            1 => Some(self_loops.remove(0)),
+            _ => Some(Hir::alternation(self_loops)),
+        };
+
+        let mut incomings_groups = FxHashMap::<_, Vec<_>>::default();
+        for link in dfa.links_to(rip).cloned() {
+            incomings_groups.entry(link.from).or_default().push(link);
+        }
+
+        let mut outgoings_groups = FxHashMap::<_, Vec<_>>::default();
+        for link in dfa.links_from(rip).cloned() {
+            outgoings_groups.entry(link.to).or_default().push(link);
+        }
 
         dfa.remove_links_any(rip);
 
-        debug_assert_eq!(dfa.links_from_to(rip, rip).count(), 0);
+        debug_assert_eq!(dfa.links_from(rip).count(), 0);
+        debug_assert_eq!(dfa.links_to(rip).count(), 0);
 
         for (from, incomings) in &incomings_groups {
             for (to, outgoings) in &outgoings_groups {
                 if *from == rip || *to == rip {
                     continue;
                 }
-                debug_assert_ne!(from, to);
 
                 let incomings = incomings.iter().cloned().map(|l| l.symbol).collect();
                 let outgoings = outgoings.iter().cloned().map(|l| l.symbol).collect();
@@ -77,13 +107,12 @@ pub fn dfa_to_hir(dfa_origin: &Dfa<char>) -> Hir {
                 let in_sym = Hir::alternation(incomings);
                 let out_sym = Hir::alternation(outgoings);
 
-                let items = match self_loop.as_ref().cloned() {
-                    Some(self_loop) => vec![in_sym, self_loop, out_sym],
-                    None => vec![in_sym, out_sym],
+                let items = if let Some(self_loop) = self_loop.as_ref() {
+                    vec![in_sym, self_loop.clone(), out_sym]
+                } else {
+                    vec![in_sym, out_sym]
                 };
-                let hir = Hir::concat(items);
-
-                dfa.link(*from, *to, hir);
+                dfa.link(*from, *to, Hir::concat(items));
             }
         }
 

@@ -1,9 +1,8 @@
-use std::{
-    collections::HashSet,
-    fmt::{Display, Write},
-};
+use std::fmt::{Display, Write};
 
 use rustc_hash::FxHashSet;
+
+use crate::Counter;
 
 pub type State = u32;
 
@@ -135,7 +134,12 @@ impl<T> Automata<T> {
         self.states().max()
     }
 
-    pub fn states_set(&self) -> HashSet<State> {
+    pub fn next_counter(&self) -> Counter {
+        let next_counter_state = self.max_state().map(|x| x + 1).unwrap_or(0);
+        Counter::new(next_counter_state)
+    }
+
+    pub fn states_set(&self) -> FxHashSet<State> {
         self.states().collect()
     }
 

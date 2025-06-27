@@ -1,11 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
     ops::{Deref, DerefMut},
 };
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::*;
 
@@ -27,7 +26,7 @@ where
 {
     let mut dfa = Dfa::new();
     let counter = Counter::new(0);
-    let mut state_mapping: HashMap<MultiState, State> = Default::default();
+    let mut state_mapping: FxHashMap<MultiState, State> = Default::default();
 
     /// Convert NFA MultiState to single DFA State
     macro_rules! multistate_to_dfa {
@@ -51,15 +50,15 @@ where
     let initial_state = normalize_multi_state(nfa, initial_state);
     dfa.initial_states.insert(multistate_to_dfa!(initial_state));
 
-    let mut to_explore: HashSet<MultiState> = Default::default();
-    let mut explored: HashSet<MultiState> = Default::default();
+    let mut to_explore: FxHashSet<MultiState> = Default::default();
+    let mut explored: FxHashSet<MultiState> = Default::default();
 
     to_explore.insert(initial_state.clone());
     explored.insert(initial_state);
 
     while !to_explore.is_empty() {
         for from in std::mem::take(&mut to_explore) {
-            let mut to_by_symbol: HashMap<T, MultiState> = HashMap::new();
+            let mut to_by_symbol: FxHashMap<T, MultiState> = FxHashMap::default();
 
             for link in &nfa.links {
                 if !from.contains(&link.from) {
