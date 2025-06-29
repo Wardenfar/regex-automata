@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use regex_syntax::hir::{
     Class, ClassBytes, ClassBytesRange, ClassUnicode, ClassUnicodeRange, Hir, Repetition,
 };
@@ -62,22 +61,25 @@ pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
     all_states.remove(&end);
 
     for rip in all_states {
-        let mut self_loops = dfa
+        let zom = dfa
             .links_from_to(rip, rip)
-            .map(|self_loop| {
-                Hir::repetition(Repetition {
-                    greedy: false,
-                    min: 0,
-                    max: None,
-                    sub: Box::new(self_loop.symbol.clone()),
-                })
-            })
-            .collect_vec();
+            .map(|l| l.symbol.clone())
+            .zero_one_or_many();
 
-        let self_loop = match self_loops.len() {
-            0 => None,
-            1 => Some(self_loops.remove(0)),
-            _ => Some(Hir::alternation(self_loops)),
+        let self_loop = match zom {
+            ZeroOneOrMany::Many(hirs) => Some(Hir::repetition(Repetition {
+                greedy: true,
+                min: 0,
+                max: None,
+                sub: Box::new(Hir::alternation(hirs)),
+            })),
+            ZeroOneOrMany::One(hir) => Some(Hir::repetition(Repetition {
+                greedy: true,
+                min: 0,
+                max: None,
+                sub: Box::new(hir),
+            })),
+            ZeroOneOrMany::Zero => None,
         };
 
         let mut incomings_groups = FxHashMap::<_, Vec<_>>::default();
@@ -127,18 +129,24 @@ pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
 }
 
 fn merge_sibling_edges(dfa: &mut Automata<Hir>) {
-    for states in dfa.states_set().into_iter().permutations(2) {
-        let [from, to] = states.as_slice().try_into().unwrap();
+    let states = dfa.states_set();
 
-        let hirs = dfa
-            .links_from_to(from, to)
-            .map(|l| l.symbol.clone())
-            .collect_vec();
+    for from in &states {
+        for to in &states {
+            if from == to {
+                continue;
+            }
 
-        if hirs.len() <= 1 {
-            continue;
+            let zom = dfa
+                .links_from_to(*from, *to)
+                .map(|l| l.symbol.clone())
+                .zero_one_or_many();
+            match zom {
+                ZeroOneOrMany::Many(hirs) => {
+                    dfa.patch_links(*from, *to, Hir::alternation(hirs));
+                }
+                _ => {}
+            }
         }
-
-        dfa.patch_links(from, to, Hir::alternation(hirs));
     }
 }
