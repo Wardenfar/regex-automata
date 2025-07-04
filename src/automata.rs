@@ -109,17 +109,6 @@ impl<T> Automata<T> {
             .filter(move |link| link.from == from && link.to == to)
     }
 
-    pub fn patch_links(&mut self, from: State, to: State, new_symbol: T)
-    where
-        T: Clone,
-    {
-        for link in &mut self.links {
-            if link.from == from && link.to == to {
-                link.symbol = new_symbol.clone();
-            }
-        }
-    }
-
     pub fn remove_links(&mut self, from: State, to: State) {
         self.links
             .retain(|link| !(link.from == from && link.to == to))

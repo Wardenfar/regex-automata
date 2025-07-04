@@ -25,6 +25,16 @@ impl IntoHir for u8 {
     }
 }
 
+impl IntoHir for bool {
+    fn into_hir(self) -> Hir {
+        if self {
+            b'1'.into_hir()
+        } else {
+            b'0'.into_hir()
+        }
+    }
+}
+
 /// Convert DFA back to REGEX Syntax
 pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
     let counter = dfa_origin.next_counter();
@@ -64,7 +74,7 @@ pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
         let zom = dfa
             .links_from_to(rip, rip)
             .map(|l| l.symbol.clone())
-            .zero_one_or_many();
+            .zero_one_or_many_unique();
 
         let self_loop = match zom {
             ZeroOneOrMany::Many(hirs) => Some(Hir::repetition(Repetition {
@@ -103,17 +113,18 @@ pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
                     continue;
                 }
 
-                let incomings = incomings.iter().cloned().map(|l| l.symbol).collect();
-                let outgoings = outgoings.iter().cloned().map(|l| l.symbol).collect();
+                let incomings = incomings.iter().cloned().map(|l| l.symbol);
+                let outgoings = outgoings.iter().cloned().map(|l| l.symbol);
 
-                let in_sym = Hir::alternation(incomings);
-                let out_sym = Hir::alternation(outgoings);
+                let in_sym = Hir::alternation(incomings.collect_unique_vec());
+                let out_sym = Hir::alternation(outgoings.collect_unique_vec());
 
                 let items = if let Some(self_loop) = self_loop.as_ref() {
                     vec![in_sym, self_loop.clone(), out_sym]
                 } else {
                     vec![in_sym, out_sym]
                 };
+
                 dfa.link(*from, *to, Hir::concat(items));
             }
         }
@@ -122,6 +133,8 @@ pub fn dfa_to_hir<T: IntoHir>(dfa_origin: Dfa<T>) -> Hir {
 
         debug_assert_eq!(dfa.links_from_to(rip, rip).count(), 0);
     }
+
+    merge_sibling_edges(&mut dfa);
 
     assert_eq!(dfa.links.len(), 1);
 
@@ -140,10 +153,16 @@ fn merge_sibling_edges(dfa: &mut Automata<Hir>) {
             let zom = dfa
                 .links_from_to(*from, *to)
                 .map(|l| l.symbol.clone())
-                .zero_one_or_many();
+                .zero_one_or_many_unique();
+
+            dfa.remove_links(*from, *to);
+
             match zom {
                 ZeroOneOrMany::Many(hirs) => {
-                    dfa.patch_links(*from, *to, Hir::alternation(hirs));
+                    dfa.link(*from, *to, Hir::alternation(hirs));
+                }
+                ZeroOneOrMany::One(hir) => {
+                    dfa.link(*from, *to, hir);
                 }
                 _ => {}
             }
