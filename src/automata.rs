@@ -150,4 +150,36 @@ impl<T> Automata<T> {
     pub fn link(&mut self, from: State, to: State, symbol: T) {
         self.links.push(Link { from, to, symbol })
     }
+
+    pub fn map<F>(&self, mut mapper: impl FnMut(&T) -> F) -> Automata<F> {
+        Automata {
+            initial_states: self.initial_states.clone(),
+            accept_states: self.accept_states.clone(),
+            links: self
+                .links
+                .iter()
+                .map(|link| Link {
+                    from: link.from,
+                    to: link.to,
+                    symbol: mapper(&link.symbol),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn into_map<F>(self, mut mapper: impl FnMut(T) -> F) -> Automata<F> {
+        Automata {
+            initial_states: self.initial_states,
+            accept_states: self.accept_states,
+            links: self
+                .links
+                .into_iter()
+                .map(|link| Link {
+                    from: link.from,
+                    to: link.to,
+                    symbol: mapper(link.symbol),
+                })
+                .collect(),
+        }
+    }
 }
